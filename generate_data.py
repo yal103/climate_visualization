@@ -29,13 +29,13 @@ years = np.arange(2015, 2101)
 N_YEARS = len(years)
 
 anom_by_sc = {
-    'ssp126': np.load('anomaly_ssp126.npy'),
-    'ssp245': np.load('anomaly_ssp245.npy'),
-    'ssp585': np.load('anomaly_ssp585.npy'),
+    'ssp126': np.load('data/anomaly_ssp126.npy'),
+    'ssp245': np.load('data/anomaly_ssp245.npy'),
+    'ssp585': np.load('data/anomaly_ssp585.npy'),
 }
-lats = np.load('lats.npy')
-lons = np.load('lons.npy')
-years = np.load('years.npy')
+lats = np.load('data/lats.npy')
+lons = np.load('data/lons.npy')
+years = np.load('data/years.npy')
 
 # Downsample to every 3rd lat/lon point (192x288 -> ~64x96) for web performance
 STRIDE = 3

@@ -37,107 +37,18 @@ lats = np.load('lats.npy')
 lons = np.load('lons.npy')
 years = np.load('years.npy')
 
+# Downsample to every 3rd lat/lon point (192x288 -> ~64x96) for web performance
+STRIDE = 3
+lats = lats[::STRIDE]
+lons = lons[::STRIDE]
+anom_by_sc = {sc: arr[:, ::STRIDE, ::STRIDE] for sc, arr in anom_by_sc.items()}
+
 N_LAT = len(lats)
 N_LON = len(lons)
 N_YEARS = len(years)
 
-# Synthetic land/ocean mask (rough continents — used to amplify land warming)
-# Build from a few large gaussian "land" blobs centered on real continent positions
-def build_land_mask():
-    LON, LAT = np.meshgrid(lons, lats)
-    mask = np.zeros_like(LON)
-    # (center_lon, center_lat, lon_sigma, lat_sigma, weight)
-    continents = [
-        # North America
-        (-100, 45, 30, 18, 1.0),
-        (-90, 30, 25, 15, 0.9),
-        # South America
-        (-60, -15, 12, 25, 1.0),
-        # Europe
-        (15, 50, 25, 12, 0.95),
-        # Africa
-        (20, 5, 20, 25, 1.0),
-        # Asia
-        (90, 45, 40, 22, 1.0),
-        (110, 25, 25, 18, 0.95),
-        # Australia
-        (135, -25, 18, 12, 1.0),
-        # Greenland
-        (-40, 72, 12, 8, 0.9),
-        # Antarctica
-        (0, -82, 180, 8, 1.0),
-        # Siberia
-        (100, 65, 40, 12, 1.0),
-        # Indonesia/SE Asia
-        (115, 0, 12, 8, 0.7),
-    ]
-    for clon, clat, slon, slat, w in continents:
-        d2 = ((LON - clon)/slon)**2 + ((LAT - clat)/slat)**2
-        mask += w * np.exp(-d2)
-    # Threshold to a 0/1-ish mask but keep some softness
-    return np.clip(mask, 0, 1)
-
-land = build_land_mask()  # 0 = ocean, 1 = land
-
-# ---------- Anomaly generator ----------
-# For each scenario, produce anomaly[year, lat, lon] in °C relative to 2015-2034
-# Structure: A(y, lat, lon) = global_trend(y) * spatial_pattern(lat, lon) + noise
-
-def global_trend(scenario):
-    """Approx global mean anomaly trajectory by scenario (°C above 2015-2034)."""
-    t = (years - 2015) / 85.0  # 0..1 from 2015 to 2100
-    if scenario == 'ssp585':
-        # ~0 at 2015, ~4.4 at 2100, slightly accelerating
-        base = 4.4 * (t ** 1.15)
-    elif scenario == 'ssp245':
-        # Middle of the road, ~2.7 at 2100, mild saturation
-        base = 2.7 * (1 - np.exp(-2.0 * t))
-    elif scenario == 'ssp126':
-        # Strong mitigation, ~1.8 at 2100, peak ~2070 then plateau
-        base = 1.8 * (1 - np.exp(-2.5 * t)) - 0.05 * np.maximum(0, t - 0.65)**2
-    else:
-        raise ValueError(scenario)
-    # internal variability (ENSO-like)
-    noise = 0.18 * np.sin(2 * np.pi * (years - 2015) / 7.3) + 0.12 * np.random.randn(N_YEARS)
-    return base + noise
-
-def spatial_pattern():
-    """Spatial amplification factor independent of time.
-    Combines: latitude-dependent (Arctic amplification) and land-amplification."""
-    LON, LAT = np.meshgrid(lons, lats)
-    # Arctic amplification: linear ramp from ~0.7 at south pole to ~2.8 at north pole
-    # (Arctic warms faster than Antarctic in CMIP6 too, due to land/ocean differences)
-    abs_lat_norm = np.abs(LAT) / 90.0
-    lat_factor = np.where(
-        LAT > 0,
-        1.0 + 1.8 * abs_lat_norm**1.5,  # NH: up to 2.8x
-        1.0 + 0.6 * abs_lat_norm**1.5  # SH: up to 1.6x
-    )
-    # Land vs ocean: land warms ~1.4x faster
-    land_factor = 1.0 + 0.4 * land
-    pattern = lat_factor * land_factor
-    # Small spatial noise
-    pattern += 0.08 * np.random.randn(*pattern.shape)
-    return pattern  # shape (N_LAT, N_LON)
-
-# Generate scenarios
 scenarios = ['ssp126', 'ssp245', 'ssp585']
-data = {}
-
-pattern = spatial_pattern()  # shared spatial structure
-# Normalize pattern so its area-weighted global mean == 1.0
-LAT_W_PAT = np.cos(np.deg2rad(lats))
-LAT_W_PAT = LAT_W_PAT / LAT_W_PAT.sum()
-pattern_global_mean = (pattern.mean(axis=1) * LAT_W_PAT).sum()
-pattern = pattern / pattern_global_mean
-# Re-check (should be ~1.0)
-# print('pattern mean:', (pattern.mean(axis=1) * LAT_W_PAT).sum())
-
-for sc in scenarios:
-    trend = global_trend(sc)  # (N_YEARS,) — this is now exactly the global mean
-    anomaly = trend[:, None, None] * pattern[None, :, :]
-    anomaly += 0.15 * np.random.randn(*anomaly.shape)
-    data[sc] = anomaly
+data = anom_by_sc
 
 # ---------- Compute "first year crossing X°C" maps ----------
 def first_crossing(anomaly, threshold):

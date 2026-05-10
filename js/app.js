@@ -158,41 +158,19 @@ function getYearAnomalyField(scenario, year) {
 // COLOR SCALES
 // =========================================================
 function makeCrossingScale() {
-  // Map year of crossing -> color. Earlier = more red, later = more cool.
-  // Domain is set adaptively per (scenario, threshold) in updateColorDomains().
-  const interp = d3.interpolateRgbBasis([
-    '#7a0a04', '#c2261b', '#ff5c2b', '#ffaa3d', '#fde29c', '#cfe7c8', '#88b8c4', '#4a7d99',
-  ]);
-  return d3.scaleSequential(interp).domain([2020, 2100]);
+  return d3.scaleThreshold()
+    .domain([2030, 2040, 2050, 2060, 2070, 2080, 2090])
+    .range(['#7a0a04', '#c2261b', '#ff5c2b', '#ffaa3d', '#fde29c', '#88b8c4', '#4a7d99', '#2d5a73']);
 }
 
 function makeAnomalyScale() {
-  // Diverging: blue (cool) to red (hot), centered at 0.
-  return d3.scaleSequential(d3.interpolateRgbBasis([
-    '#1d3a4f', '#356a8a', '#5fa8d3', '#a8c8d8', '#f5efe3',
-    '#fde29c', '#ffaa3d', '#ff5c2b', '#c2261b', '#5a0a04',
-  ])).domain([-2, 8]);
+  return d3.scaleThreshold()
+    .domain([0, 1, 2, 3, 4, 5, 6])
+    .range(['#1d3a4f', '#356a8a', '#5fa8d3', '#a8c8d8', '#fde29c', '#ffaa3d', '#ff5c2b', '#c2261b']);
 }
 
 const crossingScale = makeCrossingScale();
 const anomalyScale = makeAnomalyScale();
-
-// Recompute domain each render based on the active crossing field.
-// This makes the color contrast strong for whatever scenario+threshold the
-// user has selected (the map is intra-scenario, not cross-scenario, so each
-// view uses its full ramp).
-function updateColorDomains() {
-  const flat = data.crossings[state.scenario][state.threshold];
-  const crossed = flat.filter(v => v !== null);
-  if (crossed.length > 0) {
-    const lo = d3.min(crossed);
-    const hi = d3.max(crossed);
-    // Pad slightly so we don't hit exact endpoints
-    crossingScale.domain([lo, Math.max(hi, lo + 5)]);
-  } else {
-    crossingScale.domain([2020, 2100]);
-  }
-}
 
 // =========================================================
 // MAP
@@ -472,42 +450,32 @@ const legendModule = (() => {
       .style('color', 'var(--ink-faint)')
       .text(mode === 'crossing' ? `Year crossing +${threshold}°C` : 'Anomaly °C');
 
-    // Build a gradient bar from a tiny SVG
-    const w = 220, h = 10;
-    const svg = container.append('svg').attr('width', w).attr('height', h);
-    const id = `legend-grad-${mode}`;
-    svg.append('defs').append('linearGradient')
-      .attr('id', id)
-      .attr('x1', '0').attr('x2', '1').attr('y1', '0').attr('y2', '0')
-      .selectAll('stop')
-      .data(d3.range(0, 1.001, 0.05))
-      .join('stop')
-        .attr('offset', d => `${d * 100}%`)
-        .attr('stop-color', d => {
-          if (mode === 'crossing') {
-            const [lo, hi] = crossingScale.domain();
-            return crossingScale(lo + d * (hi - lo));
-          } else {
-            const v = -2 + d * 10;
-            return anomalyScale(v);
-          }
-        });
-    svg.append('rect')
-      .attr('width', w).attr('height', h)
-      .attr('fill', `url(#${id})`)
-      .attr('rx', 2);
+    const colors = mode === 'crossing' ? crossingScale.range() : anomalyScale.range();
+    const labels = mode === 'crossing'
+      ? ['<2030', '2030s', '2040s', '2050s', '2060s', '2070s', '2080s', '≥2090']
+      : ['<0°', '0–1°', '1–2°', '2–3°', '3–4°', '4–5°', '5–6°', '≥6°'];
 
-    const axis = container.append('div').attr('class', 'legend-axis');
+    const swatches = container.append('div')
+      .style('display', 'flex')
+      .style('gap', '2px')
+      .style('align-items', 'flex-end');
+
+    colors.forEach((color, i) => {
+      const sw = swatches.append('div').style('display', 'flex').style('flex-direction', 'column').style('align-items', 'center');
+      sw.append('div')
+        .style('width', '24px').style('height', '10px')
+        .style('background', color).style('border-radius', '2px');
+      sw.append('div')
+        .style('font-size', '8px').style('color', 'var(--ink-faint)')
+        .style('font-family', 'var(--font-mono)').style('margin-top', '2px')
+        .text(labels[i]);
+    });
+
     if (mode === 'crossing') {
-      const [lo, hi] = crossingScale.domain();
-      const mid = Math.round((lo + hi) / 2);
-      axis.html(`<span>${Math.round(lo)}</span><span>${mid}</span><span>${Math.round(hi)}</span>`);
       container.append('div').attr('class', 'legend-never').html(`
         <span class="legend-never-swatch"></span>
         <span>Never crosses by 2100</span>
       `);
-    } else {
-      axis.html(`<span>−2°C</span><span>+2°C</span><span>+5°C</span><span>+8°C</span>`);
     }
   }
   return { init, update };
@@ -1031,7 +999,6 @@ function updateSegActive(selector, activeBtn) {
 // MAIN RENDER
 // =========================================================
 function render() {
-  updateColorDomains();
   updateStats();
   legendModule.update();
   mapModule.update();

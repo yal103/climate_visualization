@@ -1,145 +1,79 @@
 # When does the world cross 2°C?
 
-An interactive D3 visualization of CMIP6 climate-model temperature projections,
-showing when each region of the world crosses critical warming thresholds
-(1.5°C, 2°C, 3°C, 4°C) under three emissions scenarios (SSP1-2.6, SSP2-4.5,
-SSP5-8.5).
+An interactive visualization of CMIP6 climate model projections that shows *when* — and *where* — different parts of the world cross critical warming thresholds under different emissions scenarios.
 
 **DSC 106 · Project 3 · Spring 2026**
 
-## Live demo
+---
 
-Once deployed, the site lives at `https://<your-org>.github.io/<your-repo>/`.
+## What this is
 
-## Repo layout
+Global warming isn't uniform. The Arctic heats up several times faster than the tropics. Continents warm faster than oceans. And whether a region crosses 1.5°C in 2035 or never crosses 4°C at all depends heavily on what humans choose to emit over the next few decades.
 
-```
-project3/
-├── index.html              # the page
-├── css/style.css           # all styles
-├── js/
-│   ├── lib/d3.min.js       # D3 v7 (vendored — replace with CDN if preferred)
-│   └── app.js              # all viz logic, ~700 lines
-├── data/
-│   ├── grid.json           # lat/lon arrays, year array, scenarios, thresholds
-│   ├── crossings.json      # first-crossing-year maps (per scenario × threshold)
-│   ├── timeseries.bin      # binary int16-encoded full anomaly grid
-│   ├── global_means.json   # global-mean anomaly per scenario per year
-│   ├── regional_means.json # regional area-weighted means
-│   └── coastlines.json     # GeoJSON outline of continents
-├── generate_data.py        # rebuild the synthetic data files
-├── generate_coastlines.py  # rebuild the coastline GeoJSON
-└── README.md
-```
+This project makes that geography tangible. You can explore how warming spreads across the globe under three futures — aggressive mitigation (SSP1-2.6), middle-of-the-road policy (SSP2-4.5), or fossil-fuel-heavy growth (SSP5-8.5) — and pick any threshold from 1.5°C to 4°C to see when each region hits it.
 
-## Running locally
+The data comes from CESM2, one of the flagship models in the CMIP6 ensemble, downloaded from Google Cloud's public CMIP6 archive.
+
+---
+
+## What you can do with it
+
+- **Switch scenarios** to see how much the choice of emissions pathway changes the timeline
+- **Change the threshold** (1.5°C, 2°C, 3°C, 4°C) and watch the map repaint
+- **Click any grid cell** to pull up that location's full warming trajectory
+- **Pick a named region** (Arctic, Amazon, South Asia, etc.) to compare regional warming curves
+- **Toggle to anomaly mode** and scrub through years to watch warming spread across the globe in real time
+- **Hover** anywhere for lat/lon coordinates, crossing year, and 2100 projection
+
+---
+
+## How to run it locally
 
 ```bash
-cd project3
+cd climate_visualization
 python3 -m http.server 8000
-# then open http://localhost:8000
+# open http://localhost:8000
 ```
 
-Any static file server works — there is no build step.
+No build step. No npm. Just a static file server.
 
-## Deploying to GitHub Pages
+---
 
-1. Make the repo **public**.
-2. In repo Settings → Pages, set the source to `main` (root) or `/docs`.
-3. Wait ~30 seconds, then visit `https://<your-username>.github.io/<your-repo>/`.
+## Project structure
 
-The vendored `d3.min.js` works offline. If you'd rather use the CDN, swap the
-`<script>` tag in `index.html`:
-
-```html
-<!-- Local (default) -->
-<script src="js/lib/d3.min.js"></script>
-
-<!-- Or CDN -->
-<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+```
+climate_visualization/
+├── index.html              # the page
+├── css/style.css           # all styles
+├── js/app.js               # all visualization logic (~1000 lines, pure D3 v7)
+├── data/
+│   ├── grid.json           # lat/lon arrays, years, scenario/threshold metadata
+│   ├── crossings.json      # first-crossing-year per cell (scenario × threshold)
+│   ├── timeseries.bin      # full anomaly grid as binary int16 (~5 MB)
+│   ├── global_means.json   # area-weighted global mean per scenario
+│   └── regional_means.json # area-weighted means for named regions
+├── generate_data.py        # data pipeline: reads .npy files, writes data/
+└── project-3.ipynb         # CMIP6 data acquisition and .npy export
 ```
 
-## Swapping in real CMIP6 data
+---
 
-The current data is **synthetic but physically calibrated** — it follows the
-same warming patterns CESM2 produces (Arctic amplification ~3×, land/ocean
-contrast ~1.4×, and global means matching the IPCC AR6 ranges of ~1.8°C /
-~2.7°C / ~5°C in 2100 for SSP1-2.6 / SSP2-4.5 / SSP5-8.5). To replace it
-with output from your own notebook:
+## Data pipeline
 
-1. In your CMIP6 notebook, for each scenario `sc` in `('ssp126','ssp245','ssp585')`:
+The notebook (`project-3.ipynb`) connects to the CMIP6 Zarr archive on Google Cloud, downloads CESM2 temperature data for all three scenarios, computes annual means, subtracts a 2015–2034 baseline, and saves the anomaly arrays as `.npy` files in `data/`.
 
-   ```python
-   import numpy as np
-   subset = catalog.query(
-       f"variable_id == 'tas' and table_id == 'Amon' and "
-       f"experiment_id == '{sc}' and source_id == 'CESM2'"
-   )
-   ds = xr.open_zarr(gcs.get_mapper(subset.iloc[0]['zstore']), consolidated=True)
-   tas_c = ds['tas'] - 273.15
-   yearly = tas_c.groupby('time.year').mean('time')
-   baseline = yearly.sel(year=slice(2015, 2034)).mean('year')  # or pre-industrial!
-   anomaly = yearly - baseline
+`generate_data.py` then takes those `.npy` files, downsamples the grid to roughly 64×96 for web performance, computes first-crossing-year maps and regional aggregates, and writes everything to the `data/` JSON and binary files the visualization reads.
 
-   # Save as a single npy
-   np.save(f'anomaly_{sc}.npy', anomaly.values)  # shape (years, lat, lon)
-   np.save('lats.npy', yearly.lat.values)
-   np.save('lons.npy', yearly.lon.values)
-   np.save('years.npy', yearly.year.values)
-   ```
+To regenerate the data files after re-running the notebook:
 
-2. Replace the body of `generate_data.py` after the imports with:
-
-   ```python
-   anom_by_sc = {
-       'ssp126': np.load('anomaly_ssp126.npy'),
-       'ssp245': np.load('anomaly_ssp245.npy'),
-       'ssp585': np.load('anomaly_ssp585.npy'),
-   }
-   lats = np.load('lats.npy')
-   lons = np.load('lons.npy')
-   years = np.load('years.npy')
-   ```
-
-   …and let the rest of the script run (it computes crossings, regional
-   means, the global mean, and writes the same JSON / binary files).
-
-3. Re-run `python3 generate_data.py`. Done — no JS changes needed.
-
-For higher-quality coastlines, replace `data/coastlines.json` with
-[Natural Earth](https://github.com/topojson/world-atlas) `land-110m`:
-
-```html
-<!-- in app.js, replace the loadData fetch -->
-const topo = await d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json');
-data.worldGeo = topojson.feature(topo, topo.objects.land);
+```bash
+python3 generate_data.py
 ```
 
-You'll also need to add a `<script>` tag for `topojson-client`:
+---
 
-```html
-<script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
-```
+## Tech
 
-## How the viz is structured
+Built entirely with D3 v7 — no charting libraries, no frameworks. The map uses `d3.geoEqualEarth` for the projection and manually projects each grid cell as a polygon (rather than using `d3.geoPath` per cell, which produces antimeridian artifacts on some projections). Coastlines come from the Natural Earth world-atlas CDN via topojson-client.
 
-State is one object that holds the current scenario / threshold / mode / year /
-selected cell. Five components (`map`, `legend`, `globalChart`, `cellChart`,
-`histogram`) each expose `init()` and `update()`. Every control change funnels
-through `render()`, which calls all five `update()` functions. There's no
-component-to-component coupling — adding a new view means writing one module
-and one line in `render()`.
-
-The map projects each grid cell as a 4-corner polygon manually (rather than
-using `d3.geoPath`) to avoid an antimeridian-clipping artifact in `d3-geo`
-where small polygons get drawn with the entire sphere outline appended.
-
-The 5 MB `timeseries.bin` is a single `int16` array (×100 fixed-point
-anomaly °C). It loads in one fetch and gets parsed in the browser via
-`DataView` + `Int16Array`. Indexing by year is simple offset arithmetic. JSON
-encoding the same data would be ~4× larger and ~10× slower to parse.
-
-## Credits
-
-Built for DSC 106 (Spring 2026). Data structure inspired by Pangeo's CMIP6
-ARCO catalog. No charting library used — pure D3 v7.
+The binary `timeseries.bin` format stores anomaly values as `int16` (×100 fixed-point) to keep the file small enough for a browser fetch. JSON encoding the same data would be roughly 4× larger and significantly slower to parse.

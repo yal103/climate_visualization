@@ -1,0 +1,279 @@
+"""
+Generate physically realistic CMIP6-style temperature anomaly data.
+
+This mimics the structure of the user's notebook output but is generated
+locally because we don't have network access. Patterns follow well-known
+CMIP6 phenomena:
+  - Arctic amplification (~2-4x global average warming at high lats)
+  - Land-ocean contrast (land warms ~1.4x faster than ocean)
+  - Scenario differences (SSP585 ~ 4.4°C by 2100, SSP245 ~ 2.7°C, SSP126 ~ 1.8°C)
+  - Internal variability (year-to-year wiggles)
+
+Output: JSON files in ../data/ formatted for D3 consumption.
+"""
+
+import numpy as np
+import json
+import os
+
+
+np.random.seed(42)
+
+# ---------- Grid (matches typical CMIP6 ~1° resolution, downsampled for web) ----------
+# Use 2.5° x 2.5° -> 72 lon x 72 lat for tractable file size
+N_LAT = 72
+N_LON = 144
+lats = np.linspace(-87.5, 87.5, N_LAT)
+lons = np.linspace(-178.75, 178.75, N_LON)
+years = np.arange(2015, 2101)
+N_YEARS = len(years)
+
+anom_by_sc = {
+    'ssp126': np.load('anomaly_ssp126.npy'),
+    'ssp245': np.load('anomaly_ssp245.npy'),
+    'ssp585': np.load('anomaly_ssp585.npy'),
+}
+lats = np.load('lats.npy')
+lons = np.load('lons.npy')
+years = np.load('years.npy')
+
+N_LAT = len(lats)
+N_LON = len(lons)
+N_YEARS = len(years)
+
+# Synthetic land/ocean mask (rough continents — used to amplify land warming)
+# Build from a few large gaussian "land" blobs centered on real continent positions
+def build_land_mask():
+    LON, LAT = np.meshgrid(lons, lats)
+    mask = np.zeros_like(LON)
+    # (center_lon, center_lat, lon_sigma, lat_sigma, weight)
+    continents = [
+        # North America
+        (-100, 45, 30, 18, 1.0),
+        (-90, 30, 25, 15, 0.9),
+        # South America
+        (-60, -15, 12, 25, 1.0),
+        # Europe
+        (15, 50, 25, 12, 0.95),
+        # Africa
+        (20, 5, 20, 25, 1.0),
+        # Asia
+        (90, 45, 40, 22, 1.0),
+        (110, 25, 25, 18, 0.95),
+        # Australia
+        (135, -25, 18, 12, 1.0),
+        # Greenland
+        (-40, 72, 12, 8, 0.9),
+        # Antarctica
+        (0, -82, 180, 8, 1.0),
+        # Siberia
+        (100, 65, 40, 12, 1.0),
+        # Indonesia/SE Asia
+        (115, 0, 12, 8, 0.7),
+    ]
+    for clon, clat, slon, slat, w in continents:
+        d2 = ((LON - clon)/slon)**2 + ((LAT - clat)/slat)**2
+        mask += w * np.exp(-d2)
+    # Threshold to a 0/1-ish mask but keep some softness
+    return np.clip(mask, 0, 1)
+
+land = build_land_mask()  # 0 = ocean, 1 = land
+
+# ---------- Anomaly generator ----------
+# For each scenario, produce anomaly[year, lat, lon] in °C relative to 2015-2034
+# Structure: A(y, lat, lon) = global_trend(y) * spatial_pattern(lat, lon) + noise
+
+def global_trend(scenario):
+    """Approx global mean anomaly trajectory by scenario (°C above 2015-2034)."""
+    t = (years - 2015) / 85.0  # 0..1 from 2015 to 2100
+    if scenario == 'ssp585':
+        # ~0 at 2015, ~4.4 at 2100, slightly accelerating
+        base = 4.4 * (t ** 1.15)
+    elif scenario == 'ssp245':
+        # Middle of the road, ~2.7 at 2100, mild saturation
+        base = 2.7 * (1 - np.exp(-2.0 * t))
+    elif scenario == 'ssp126':
+        # Strong mitigation, ~1.8 at 2100, peak ~2070 then plateau
+        base = 1.8 * (1 - np.exp(-2.5 * t)) - 0.05 * np.maximum(0, t - 0.65)**2
+    else:
+        raise ValueError(scenario)
+    # internal variability (ENSO-like)
+    noise = 0.18 * np.sin(2 * np.pi * (years - 2015) / 7.3) + 0.12 * np.random.randn(N_YEARS)
+    return base + noise
+
+def spatial_pattern():
+    """Spatial amplification factor independent of time.
+    Combines: latitude-dependent (Arctic amplification) and land-amplification."""
+    LON, LAT = np.meshgrid(lons, lats)
+    # Arctic amplification: linear ramp from ~0.7 at south pole to ~2.8 at north pole
+    # (Arctic warms faster than Antarctic in CMIP6 too, due to land/ocean differences)
+    abs_lat_norm = np.abs(LAT) / 90.0
+    lat_factor = np.where(
+        LAT > 0,
+        1.0 + 1.8 * abs_lat_norm**1.5,  # NH: up to 2.8x
+        1.0 + 0.6 * abs_lat_norm**1.5  # SH: up to 1.6x
+    )
+    # Land vs ocean: land warms ~1.4x faster
+    land_factor = 1.0 + 0.4 * land
+    pattern = lat_factor * land_factor
+    # Small spatial noise
+    pattern += 0.08 * np.random.randn(*pattern.shape)
+    return pattern  # shape (N_LAT, N_LON)
+
+# Generate scenarios
+scenarios = ['ssp126', 'ssp245', 'ssp585']
+data = {}
+
+pattern = spatial_pattern()  # shared spatial structure
+# Normalize pattern so its area-weighted global mean == 1.0
+LAT_W_PAT = np.cos(np.deg2rad(lats))
+LAT_W_PAT = LAT_W_PAT / LAT_W_PAT.sum()
+pattern_global_mean = (pattern.mean(axis=1) * LAT_W_PAT).sum()
+pattern = pattern / pattern_global_mean
+# Re-check (should be ~1.0)
+# print('pattern mean:', (pattern.mean(axis=1) * LAT_W_PAT).sum())
+
+for sc in scenarios:
+    trend = global_trend(sc)  # (N_YEARS,) — this is now exactly the global mean
+    anomaly = trend[:, None, None] * pattern[None, :, :]
+    anomaly += 0.15 * np.random.randn(*anomaly.shape)
+    data[sc] = anomaly
+
+# ---------- Compute "first year crossing X°C" maps ----------
+def first_crossing(anomaly, threshold):
+    """For each grid cell, return first year anomaly >= threshold; else NaN."""
+    crossed = anomaly >= threshold  # (N_YEARS, N_LAT, N_LON)
+    ever = crossed.any(axis=0)
+    # idxmax returns first True index
+    first_idx = crossed.argmax(axis=0)
+    first_year = years[first_idx].astype(float)
+    first_year[~ever] = np.nan
+    return first_year
+
+thresholds = [1.5, 2.0, 3.0, 4.0]
+
+# ---------- Write outputs ----------
+out_dir = os.path.join(os.path.dirname(__file__), 'data')
+os.makedirs(out_dir, exist_ok=True)
+
+# 1. Grid metadata
+with open(os.path.join(out_dir, 'grid.json'), 'w') as f:
+    json.dump({
+        'lats': lats.tolist(),
+        'lons': lons.tolist(),
+        'years': years.tolist(),
+        'thresholds': thresholds,
+        'scenarios': scenarios,
+        'n_lat': N_LAT,
+        'n_lon': N_LON,
+    }, f)
+
+# 2. First-crossing-year maps for each (scenario, threshold)
+# Shape: { scenario: { threshold: flat array of N_LAT*N_LON } }
+crossing_data = {}
+for sc in scenarios:
+    crossing_data[sc] = {}
+    for th in thresholds:
+        fy = first_crossing(data[sc], th)
+        # Convert NaN to null for JSON, and flatten
+        flat = []
+        for v in fy.flatten():
+            flat.append(None if np.isnan(v) else int(v))
+        crossing_data[sc][str(th)] = flat
+
+with open(os.path.join(out_dir, 'crossings.json'), 'w') as f:
+    json.dump(crossing_data, f)
+
+# 3. Time series at grid level — stored as binary int16 (×100) to save bandwidth.
+# Layout per scenario: (N_YEARS, N_LAT*N_LON) int16 little-endian = ~3.5 MB total
+# (vs 12+ MB JSON). We keep all three scenarios in one file with header.
+import struct
+ts_path = os.path.join(out_dir, 'timeseries.bin')
+with open(ts_path, 'wb') as f:
+    # Header: magic, n_scenarios, n_years, n_lat, n_lon
+    f.write(b'CMIP')
+    f.write(struct.pack('<IIII', len(scenarios), N_YEARS, N_LAT, N_LON))
+    # Scenario names: 8 bytes each, ascii padded
+    for sc in scenarios:
+        f.write(sc.ljust(8, '\0').encode('ascii'))
+    # Data: int16 little-endian, scenario-major
+    for sc in scenarios:
+        arr = data[sc]
+        arr_int = np.round(arr * 100).astype(np.int16)
+        f.write(arr_int.tobytes(order='C'))
+print(f"  timeseries.bin: {os.path.getsize(ts_path)/1024:.1f} KB (binary int16)")
+
+# 4. Global mean anomaly per scenario (for line chart)
+global_means = {}
+# weight by cos(lat) for area-weighted mean
+LAT_W = np.cos(np.deg2rad(lats))
+LAT_W = LAT_W / LAT_W.sum()
+for sc in scenarios:
+    arr = data[sc]  # (Y, lat, lon)
+    # area-weighted: mean over lon first, then weighted lat mean
+    zonal = arr.mean(axis=2)  # (Y, lat)
+    gm = (zonal * LAT_W[None, :]).sum(axis=1)
+    global_means[sc] = [round(float(v), 3) for v in gm]
+
+with open(os.path.join(out_dir, 'global_means.json'), 'w') as f:
+    json.dump(global_means, f)
+
+# 5. Land-only and ocean-only zonal/regional aggregates for fun
+# Define a few named regions
+regions = {
+    'Arctic': {'lat': (66, 90), 'lon': (-180, 180)},
+    'Northern mid-latitudes': {'lat': (30, 60), 'lon': (-180, 180)},
+    'Tropics': {'lat': (-23, 23), 'lon': (-180, 180)},
+    'Southern mid-latitudes': {'lat': (-60, -30), 'lon': (-180, 180)},
+    'Antarctic': {'lat': (-90, -66), 'lon': (-180, 180)},
+    'North America': {'lat': (15, 75), 'lon': (-170, -50)},
+    'Europe': {'lat': (35, 72), 'lon': (-15, 45)},
+    'Sahara/N. Africa': {'lat': (15, 35), 'lon': (-15, 50)},
+    'Amazon': {'lat': (-15, 5), 'lon': (-75, -45)},
+    'South Asia': {'lat': (5, 35), 'lon': (65, 100)},
+}
+
+regional_means = {}
+for sc in scenarios:
+    arr = data[sc]
+    regional_means[sc] = {}
+    LAT2D, LON2D = np.meshgrid(lats, lons, indexing='ij')
+    for rname, rb in regions.items():
+        lat_mask = (LAT2D >= rb['lat'][0]) & (LAT2D <= rb['lat'][1])
+        lon_mask = (LON2D >= rb['lon'][0]) & (LON2D <= rb['lon'][1])
+        mask = lat_mask & lon_mask
+        # area weights
+        w = np.cos(np.deg2rad(LAT2D)) * mask
+        wsum = w.sum()
+        if wsum == 0:
+            regional_means[sc][rname] = [0.0] * N_YEARS
+            continue
+        # weighted mean per year
+        ts = []
+        for yi in range(N_YEARS):
+            ts.append(round(float((arr[yi] * w).sum() / wsum), 3))
+        regional_means[sc][rname] = ts
+
+with open(os.path.join(out_dir, 'regional_means.json'), 'w') as f:
+    json.dump(regional_means, f)
+
+# Print summary
+print("Generated CMIP6-style synthetic data:")
+print(f"  Grid: {N_LAT} lat × {N_LON} lon")
+print(f"  Years: {years[0]}–{years[-1]} ({N_YEARS} years)")
+print(f"  Scenarios: {scenarios}")
+print(f"  Thresholds: {thresholds}")
+print(f"  Regions: {list(regions.keys())}")
+print()
+for fn in os.listdir(out_dir):
+    p = os.path.join(out_dir, fn)
+    sz = os.path.getsize(p)
+    print(f"  {fn}: {sz/1024:.1f} KB")
+
+# Quick sanity check
+print()
+for sc in scenarios:
+    final = data[sc][-1].mean()
+    print(f"  {sc} 2100 global mean anomaly: {final:.2f} °C")
+    arctic_final = data[sc][-1][lats > 66].mean()
+    print(f"    Arctic 2100: {arctic_final:.2f} °C")

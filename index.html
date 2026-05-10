@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>When the world crosses 2°C — CMIP6 threshold explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,700;9..144,900&family=JetBrains+Mono:wght@400;500&family=Inter+Tight:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ============== HERO ============== -->
+<header class="hero">
+  <div class="hero-grain"></div>
+  <div class="hero-inner">
+    <div class="kicker">
+      <span class="kicker-dot"></span>
+      <span>CMIP6 · CESM2 · scenario projections 2015–2100</span>
+    </div>
+    <h1>
+      When does the<br>world cross<br>
+      <span class="hero-num" id="hero-threshold">2°C</span>?
+    </h1>
+    <p class="hero-sub">
+      Global warming isn't uniform. The Arctic heats up four times faster than the
+      tropics; continents outpace oceans; and under different emissions scenarios,
+      regions cross dangerous warming thresholds decades apart. Click anywhere on
+      the map to see when warming arrives there — and how much depends on what
+      humans choose to do.
+    </p>
+  </div>
+</header>
+
+<!-- ============== CONTROLS ============== -->
+<section class="controls" id="controls">
+  <div class="controls-row">
+    <!-- Scenario tabs -->
+    <div class="control-group">
+      <div class="control-label">Emissions scenario</div>
+      <div class="seg-control" id="scenario-control" role="tablist" aria-label="Emissions scenario">
+        <button class="seg-btn" data-value="ssp126" role="tab">
+          <span class="seg-name">SSP1-2.6</span>
+          <span class="seg-desc">Strong mitigation</span>
+        </button>
+        <button class="seg-btn" data-value="ssp245" role="tab">
+          <span class="seg-name">SSP2-4.5</span>
+          <span class="seg-desc">Middle of the road</span>
+        </button>
+        <button class="seg-btn active" data-value="ssp585" role="tab">
+          <span class="seg-name">SSP5-8.5</span>
+          <span class="seg-desc">Fossil-fueled</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Threshold slider -->
+    <div class="control-group">
+      <div class="control-label">Warming threshold</div>
+      <div class="seg-control" id="threshold-control" role="tablist" aria-label="Warming threshold">
+        <button class="seg-btn" data-value="1.5">
+          <span class="seg-name">1.5°C</span>
+          <span class="seg-desc">Paris goal</span>
+        </button>
+        <button class="seg-btn active" data-value="2.0">
+          <span class="seg-name">2°C</span>
+          <span class="seg-desc">Paris ceiling</span>
+        </button>
+        <button class="seg-btn" data-value="3.0">
+          <span class="seg-name">3°C</span>
+          <span class="seg-desc">Severe</span>
+        </button>
+        <button class="seg-btn" data-value="4.0">
+          <span class="seg-name">4°C</span>
+          <span class="seg-desc">Catastrophic</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- View mode -->
+    <div class="control-group">
+      <div class="control-label">Map shows</div>
+      <div class="seg-control" id="mode-control">
+        <button class="seg-btn active" data-value="crossing">
+          <span class="seg-name">First crossing year</span>
+        </button>
+        <button class="seg-btn" data-value="anomaly">
+          <span class="seg-name">Anomaly in</span>
+          <span class="seg-desc"><span id="year-readout">2050</span></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Year scrubber (visible only in 'anomaly' mode) -->
+  <div class="year-scrubber" id="year-scrubber" hidden>
+    <div class="scrubber-row">
+      <button id="play-btn" class="play-btn" aria-label="Play">
+        <svg viewBox="0 0 24 24" width="14" height="14"><path id="play-icon" d="M8 5v14l11-7z" fill="currentColor"/></svg>
+      </button>
+      <div class="scrubber-stack">
+        <input type="range" id="year-slider" min="2015" max="2100" step="1" value="2050" />
+        <div class="scrubber-ticks">
+          <span>2015</span>
+          <span>2040</span>
+          <span>2060</span>
+          <span>2080</span>
+          <span>2100</span>
+        </div>
+      </div>
+      <div class="year-tick" id="year-tick">2050</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============== MAIN VIZ ============== -->
+<main class="viz-grid">
+
+  <!-- Map -->
+  <section class="card map-card">
+    <header class="card-head">
+      <div>
+        <h2 class="card-title" id="map-title">First year each region crosses +2°C</h2>
+        <p class="card-sub" id="map-sub">Under SSP5-8.5 · relative to 2015–2034 baseline · click a cell to inspect</p>
+      </div>
+      <div class="map-legend" id="map-legend">
+        <!-- filled by JS -->
+      </div>
+    </header>
+    <div class="map-wrap">
+      <svg id="map" role="img" aria-label="World map of warming threshold crossing years"></svg>
+      <div class="tooltip" id="tooltip" role="tooltip"></div>
+      <div class="map-overlay-msg" id="map-loading">Loading climate data…</div>
+    </div>
+    <footer class="card-foot">
+      <div class="foot-stat">
+        <span class="foot-num" id="stat-pct-crossed">—</span>
+        <span class="foot-lbl">of land area crosses by 2100</span>
+      </div>
+      <div class="foot-stat">
+        <span class="foot-num" id="stat-median-year">—</span>
+        <span class="foot-lbl">median crossing year</span>
+      </div>
+      <div class="foot-stat">
+        <span class="foot-num" id="stat-first-region">—</span>
+        <span class="foot-lbl">first region to cross</span>
+      </div>
+    </footer>
+  </section>
+
+  <!-- Right column: global means + cell ts + histogram -->
+  <aside class="side-col">
+
+    <!-- Global means line chart -->
+    <section class="card">
+      <header class="card-head compact">
+        <div>
+          <h3 class="card-title">Global temperature trajectory</h3>
+          <p class="card-sub">Area-weighted global-mean anomaly · all scenarios</p>
+        </div>
+      </header>
+      <svg id="global-chart" class="side-chart"></svg>
+    </section>
+
+    <!-- Cell time series -->
+    <section class="card" id="cell-card">
+      <header class="card-head compact">
+        <div>
+          <h3 class="card-title" id="cell-title">Click a region on the map</h3>
+          <p class="card-sub" id="cell-sub">Or pick one below to compare regional warming.</p>
+        </div>
+      </header>
+      <div class="region-chips" id="region-chips">
+        <!-- filled by JS -->
+      </div>
+      <svg id="cell-chart" class="side-chart"></svg>
+    </section>
+
+    <!-- Histogram -->
+    <section class="card">
+      <header class="card-head compact">
+        <div>
+          <h3 class="card-title">Distribution of crossing years</h3>
+          <p class="card-sub">Across all grid cells · current scenario & threshold</p>
+        </div>
+      </header>
+      <svg id="histogram" class="side-chart"></svg>
+    </section>
+
+  </aside>
+</main>
+
+<!-- ============== WRITEUP ============== -->
+<section class="writeup" id="writeup">
+  <div class="writeup-inner">
+    <h2>Design rationale & process</h2>
+
+    <article class="writeup-block">
+      <h3>The question</h3>
+      <p>
+        The single most important number in climate policy is when — and where —
+        warming crosses a given threshold. We wanted a viewer to feel the
+        geographic and temporal stakes at once: the Arctic is already a different
+        world; the Tropics will be soon; what humans do this decade decides
+        whether anywhere stays below 2°C.
+      </p>
+    </article>
+
+    <article class="writeup-block">
+      <h3>Visual encoding</h3>
+      <p>
+        The hero is a <strong>choropleth on an equal-earth projection</strong>.
+        Year of first crossing is mapped to a <strong>diverging color ramp</strong>
+        — early crossings (red/orange) versus late or never (blue/grey). A
+        sequential ramp would imply ordinal severity along one axis; a diverging
+        ramp matches our mental model of "soon vs. eventually vs. avoided".
+      </p>
+      <p>
+        Position on the map is the natural channel for spatial data, and color
+        ramp for the ordinal year value. We considered animated dots and small
+        multiples (one map per scenario) but chose a single map with toggle
+        controls because the comparison the user actually makes — "what
+        changes when I move from SSP1-2.6 to SSP5-8.5?" — is more visceral when
+        the same view morphs.
+      </p>
+    </article>
+
+    <article class="writeup-block">
+      <h3>Interaction</h3>
+      <p>
+        Three primary controls (scenario, threshold, mode) drive every panel
+        simultaneously. The trajectory line chart shows how the global mean
+        evolves and where the chosen threshold sits relative to all three
+        scenarios — the dot indicating the chosen scenario's crossing year is
+        the bridge between the map and the time-axis.
+      </p>
+      <p>
+        Click-to-inspect on the map opens a per-grid-cell time series so the
+        user can see the actual warming curve for any spot — Arctic Russia,
+        the Sahel, central Brazil. Hover gives details on demand without
+        committing to a click. A year scrubber animates the anomaly map for
+        users who want a "play" view of warming spreading across the globe.
+      </p>
+    </article>
+
+    <article class="writeup-block">
+      <h3>Data transformations</h3>
+      <p>
+        The CMIP6 CESM2 monthly near-surface air temperature ('tas') field is
+        converted from Kelvin to Celsius, averaged annually, and expressed as
+        anomalies relative to the 2015–2034 mean (we will replace this with a
+        pre-industrial baseline using the historical experiment for the final
+        version). Per grid cell we compute the first year the anomaly equals
+        or exceeds each threshold; cells that never cross within 2015–2100 are
+        rendered as "never". Global and regional means are area-weighted by
+        cos(latitude). The grid is 72×144 (~2.5°), down from CESM2's native
+        resolution to keep the page fast.
+      </p>
+    </article>
+
+    <article class="writeup-block">
+      <h3>Process</h3>
+      <p>
+        Built with D3 v7 — no charting library, all custom shapes. ~30
+        people-hours so far: data acquisition and cleaning was about a third,
+        the choropleth and projection plumbing another third, and the linked-
+        view choreography and visual polish the last third. Hardest part was
+        making the four panels stay in sync without lag while the user drags
+        the year slider.
+      </p>
+    </article>
+  </div>
+</section>
+
+<footer class="page-foot">
+  <span>DSC 106 · Project 3 · 2026</span>
+  <span>Data: CMIP6 (CESM2) via Google Cloud Public Datasets</span>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
+<script src="js/app.js"></script>
+
+</body>
+</html>

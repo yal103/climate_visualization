@@ -459,6 +459,26 @@ const mapModule = (() => {
 // =========================================================
 // TOOLTIP
 // =========================================================
+function getRegionForCell(lat, lon) {
+  const normLon = lon > 180 ? lon - 360 : lon;
+  const specific = [
+    { name: "North America",    lat: [15, 75],  lon: [-170, -50] },
+    { name: "Europe",           lat: [35, 72],  lon: [-15,   45] },
+    { name: "Sahara/N. Africa", lat: [15, 35],  lon: [-15,   50] },
+    { name: "Amazon",           lat: [-15,  5], lon: [-75,  -45] },
+    { name: "South Asia",       lat: [5,   35], lon: [65,   100] },
+  ];
+  for (const r of specific) {
+    if (lat >= r.lat[0] && lat <= r.lat[1] && normLon >= r.lon[0] && normLon <= r.lon[1])
+      return r.name;
+  }
+  if (lat > 66)   return "Arctic";
+  if (lat < -66)  return "Antarctic";
+  if (lat >= 30)  return "Northern mid-latitudes";
+  if (lat <= -30) return "Southern mid-latitudes";
+  return "Tropics";
+}
+
 function showTooltip(event, d) {
   const tip = document.getElementById("tooltip");
   const { scenario, threshold, mode, year } = state;
@@ -467,7 +487,9 @@ function showTooltip(event, d) {
   const final = getCellAnomaly(scenario, 2100, d.latIdx, d.lonIdx);
 
   const latStr = `${Math.abs(d.lat).toFixed(1)}°${d.lat >= 0 ? "N" : "S"}`;
-  const lonStr = `${Math.abs(d.lon).toFixed(1)}°${d.lon >= 0 ? "E" : "W"}`;
+  const normLon = d.lon > 180 ? d.lon - 360 : d.lon;
+  const lonStr = `${Math.abs(normLon).toFixed(1)}°${normLon >= 0 ? "E" : "W"}`;
+  const region = getRegionForCell(d.lat, d.lon);
 
   let headline;
   if (mode === "crossing") {
@@ -483,6 +505,10 @@ function showTooltip(event, d) {
     <div class="tip-row">
       <span class="tip-key">Location</span>
       <span class="tip-val">${latStr}, ${lonStr}</span>
+    </div>
+    <div class="tip-row">
+      <span class="tip-key">Region</span>
+      <span class="tip-val">${region}</span>
     </div>
     <div class="tip-headline">${headline}</div>
     <div class="tip-row">

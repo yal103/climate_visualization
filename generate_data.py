@@ -149,9 +149,11 @@ for sc in scenarios:
     arr = data[sc]
     regional_means[sc] = {}
     LAT2D, LON2D = np.meshgrid(lats, lons, indexing='ij')
+    # Normalize 0-360 lons to -180..180 for region masking
+    LON2D_NORM = np.where(LON2D > 180, LON2D - 360, LON2D)
     for rname, rb in regions.items():
         lat_mask = (LAT2D >= rb['lat'][0]) & (LAT2D <= rb['lat'][1])
-        lon_mask = (LON2D >= rb['lon'][0]) & (LON2D <= rb['lon'][1])
+        lon_mask = (LON2D_NORM >= rb['lon'][0]) & (LON2D_NORM <= rb['lon'][1])
         mask = lat_mask & lon_mask
         # area weights
         w = np.cos(np.deg2rad(LAT2D)) * mask

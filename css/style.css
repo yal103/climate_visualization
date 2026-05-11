@@ -115,6 +115,15 @@ button { font-family: inherit; }
   font-variation-settings: 'opsz' 144;
 }
 
+.hero h2 {
+  font-family: var(--font-display);
+  font-weight: 300;
+  line-height: 0.92;
+  letter-spacing: -0.04em;
+  margin: 0 0 24px;
+  font-variation-settings: 'opsz' 144;
+}
+
 .hero-num {
   font-style: italic;
   font-weight: 700;
